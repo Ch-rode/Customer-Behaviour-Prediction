@@ -1,4 +1,5 @@
 # Prediction-Customer-Behaviour
+(This is a project created for a university assignment)
 Data downloaded from **IBM Sample Data Sets** for **customer retention programs**. The goal of this work is to create an analysis in order to **predict consumer behaviour**. 
 The project is subdivided in the following steps:
 • Data Preparation
@@ -11,4 +12,5 @@ The project is subdivided in the following steps:
 - XGBoost
 • Conclusions
 
-This is a project created for a university assignment.
+The **report file** contains a detailed explanation of the various procedures, what has been done, the structure of the models and the conclusions regarding the results we have obtained.
+
