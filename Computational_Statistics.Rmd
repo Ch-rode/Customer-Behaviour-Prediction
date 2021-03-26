@@ -1,0 +1,1113 @@
+---
+title: "Computational Statistics Exam"
+author: "Chiara Rodella"
+date: "June 2020"
+output: pdf_document
+---
+Data downloaded from IBM Sample Data Sets for customer retention programs.
+
+The goal of this work is to create an analysis in order to predict consumer behaviour. 
+
+The dataset is organized as a list of cusotmers whose entries are characteristics (attributes) of 
+the clients.
+
+The variable of interest, on which the analysis is based is **Churn**, which indicates customers that left within the last month.
+The other available variables identify **services that each customer has signed up for**; for example phone, multiple lines, internet, online security, online backup, device protection, tech support, streaming TV and movies. There are also present **customer account information** (how long they've been a customer, contract, payment method, paperless billing, monthly charges, and total charges) and **demographic info about customers**  (gender, age range, and if they have partners and dependents).
+
+The work is subdivided in the following steps:
+
+* Data Preparation 
+* EDA
+* Models
+* Conclusions
+
+## Data Preparation 
+
+### Packages used
+
+Packages are the fundamental units of reproducible R code. They include reusable R functions, the documentation that describes how to use them, and the data. 
+Here are some examples of some, but not all, of the packets used:
+\begin{itemize}
+  \item library(ggplot2)
+  \item library(corrplot)
+  \item library(ROSE)
+  \item library(rpart)
+\end{itemize}
+
+```{r warning=FALSE, include=FALSE}
+suppressMessages(library(gridExtra))
+suppressMessages(library(ggplot2))
+suppressMessages(library(lattice))
+suppressMessages(library(corrplot))
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(caret))
+suppressMessages(library(ROSE))
+suppressMessages(library(randomForest))
+suppressMessages(library(partykit))
+suppressMessages(library(tree))
+suppressMessages(library(rpart))
+suppressMessages(library(rpart.plot))
+suppressMessages(library(bestglm))
+suppressMessages(library(boot))
+suppressMessages(library(plot.matrix))
+suppressMessages(library(gridExtra))
+suppressMessages(library(ggplotify))
+suppressMessages(library(rattle))
+suppressMessages(library(xgboost))
+#suppressMessages(library(tidyverse))
+```
+
+### Data preparation
+We proceed by loading the dataset, which is saved in the directory that we have presented.
+
+```{r}
+data=read.csv("WA_Fn-UseC_-Telco-Customer-Churn.csv")
+```
+
+We use the following command to view the dataset directly in R and also verify that the upload was successful.
+
+```{r echo=TRUE, warning=FALSE, }
+str(data) 
+```
+
+It can  be seen that the senior citizen variable is currently red as an *integer*, however it is more appropriate to change it into a *factor* in order to have a dichotomous variable "yes / no".
+
+```{r}
+data$SeniorCitizen= as.factor(mapvalues(data$SeniorCitizen,
+                                          from=c("0","1"),
+                                          to=c("No", "Yes")))
+```
+```{r include=FALSE}
+str(data)
+```
+
+R provides a wide range of functions for obtaining summary statistics such as the command below. This is an important first step in order to begin interpreting the data, and then to move on to more complex analysis and insights gathering.
+
+```{r}
+summary(data)
+```
+
+Let's now proceed with the handling of the missing values. Missing data are a common occurrence and can have a significant effect on the conclusions that can be drawn from the data.
+
+```{r}
+sapply(data, function(x) sum(is.na(x))) 
+```
+
+We see that in "Total Charges" there are missing values. We then extract the subset, given their relatively low number (only 11 out of 7043 observations), to go into detail; we have to understand whether to hypothesize imputation techniques, for example, or eliminate them.
+
+```{r include=FALSE}
+subset(data, is.na(data$TotalCharges))
+```
+
+There are only 11 rows out of 7043 total and all with target variable "Churn = No".
+As we will see later "Churn = No" is overrappresented in our population so we can remove these rows.
+
+```{r}
+data=na.omit(data)
+cat("New number of observations:",dim(data)[1])
+```
+
+Since we are still in the data preparation phase, we prepare the tenure variable directly in a way that will be useful in the subsequent analysis.
+
+```{r}
+tenure_initial=data[,"tenure"]  
+TotalCharges_initial=data[,"TotalCharges"] 
+```
+
+We see how some variables present a redundancy in "No" and "No internet services"; we make the assumption that "No internet services" can be represented in the "No" category.
+
+```{r}
+cols1 = c(10:15)
+
+for(i in 1:ncol(data[,cols1])) {
+  data[,cols1][,i] <- as.factor(mapvalues
+                                (data[,cols1][,i], from =c("No internet service"),to=c("No")))
+}
+
+data$MultipleLines = as.factor(mapvalues(data$MultipleLines,
+                                         from = c("No phone service"),to = c("No")))
+```
+
+We want to focus on the tenure variable and see how to treat it, to make it more useful in our analysis.  
+We start from a graphical investigation.
+
+```{r echo=FALSE}
+summary(data$tenure)
+
+color = c('Mean'='green',
+          '1st Q.'='darkgreen',
+          '3rd Q.'='blue',
+          'Median'='magenta',
+          'MAX'='red',
+          'min'='azure')
+ggplot()+
+  geom_density(data=data,mapping = aes(x=data$tenure),fill='lightblue')+
+  geom_vline(mapping=aes(xintercept = mean(data$tenure),color='Mean'),
+             linetype = "dashed", size = 0.6)+
+  geom_vline(mapping=aes(xintercept = quantile(data$tenure,0.25),color='1st Q.'),
+             linetype = "dashed", size = 0.6)+
+  geom_vline(mapping=aes(xintercept = median(data$tenure),color='Median'),
+             linetype = "dashed", size = 0.6)+
+  geom_vline(mapping=aes(xintercept = quantile(data$tenure,0.75),color='3rd Q.'),
+             linetype = "dashed", size = 0.6)+
+  geom_vline(mapping=aes(xintercept = max(data$tenure,0.75),color='MAX'),
+             linetype = "dashed", size = 0.6)+
+  geom_vline(mapping=aes(xintercept = min(data$tenure,0.75),color='min'),
+             linetype = "dashed", size = 0.6)+
+  scale_colour_manual(name="Positions",values=color)+
+  scale_x_continuous(breaks = seq(0,75,by=5))+
+  xlab('Tenure')+
+  ylab('Density')+
+  ggtitle('Tenure distribution',subtitle = 'Mean and quantile division')
+```
+
+We have min 1 month and max 72 month. 
+We thought it would have been more practical and easier to interpret reasoning on horizons divided year by year instead of month by month.
+We therefore decided to divide "Tenure" into five annual groups as shown in the following code:
+
+```{r}
+data$tenure_groups = 0
+
+data$tenure_groups[data$tenure>=1 & data$tenure<=12]="1y"
+data$tenure_groups[data$tenure>12 & data$tenure<=24]="2y" 
+data$tenure_groups[data$tenure>24 & data$tenure<=36]="3y"  
+data$tenure_groups[data$tenure>36 & data$tenure<=48]="4y"
+data$tenure_groups[data$tenure>48 ]="5y+"
+
+summary.factor(data$tenure_groups)
+```
+
+We therfore transform the variable tenure_groups into factor with 5 levels as created above:
+
+```{r}
+data$tenure_groups = as.factor(data$tenure_groups)
+
+str(data$tenure_groups) #to check the new data type
+```
+
+We conclude this preparatory phase by removing those columns that we will not need for our further analysis. We are therefore going to create a pre-processed dataset with all the appropriate changes made for the analysis we are about to do. This is called: **D_Churn**.
+
+```{r}
+data$customerID = NULL
+data$tenure = NULL
+D_Churn=data
+```
+
+## EDA
+Exploratory Data Analysis refers to the critical process of performing initial investigations on data so as to discover patterns,to spot anomalies,to test hypothesis and to check assumptions with the help of summary statistics and graphical representations.
+It is a good practice to understand the data first and try to find insights from it. 
+
+### Variables Analysis
+We begin the exploratory analysis of the variables and observations that we have available starting from the quantitatives variables, then move also on to the categorical ones.
+
+First of all, given all the variables, let's identify the quantitative ones using the following function:
+
+```{r}
+Quant.var=sapply(D_Churn, is.numeric)
+Quant.var
+```
+```{r}
+summary.factor(Quant.var)
+```
+
+We therefore have only two quantitative variables which are: *MonthlyCharges* and *TotalCharges*. We saved them under the name: *Quant.var*.
+
+We begin the study starting from the correlation matrix.
+A **correlation matrix** is a table showing correlation coefficients between sets of variables. Each random variable ($X_i$) in the table is correlated with each of the other values in the table ($X_j$). This allows us to check which pairs of variables have the highest correlation. In this case we have our Quant.var.
+
+```{r echo=FALSE}
+corr.matrix=cor(D_Churn[,Quant.var])
+
+corrplot(corr.matrix, type = "upper", order = "hclust", 
+         tl.col = "black",tl.srt = 0, method = "number",
+         main="Correlation Plot for Quantitative Variables",
+         lwd=0.5)
+```
+
+Monthly and Total Charges are highly correlated as it was easy and intuitive to expect. We propose to remove "Total Charges" variable since it is a consequence of the other variable.
+It has to be specified that this is an assumption, a logical choiche, that we decided to make, it is not functional for us to keep both varibles. However, this does not mean that keeping this variable could not be useful for another type of analysis.
+
+```{r}
+D_Churn$TotalCharges = NULL
+```
+
+Now let's see the distribution plots for the individual variables:
+
+```{r echo=FALSE}
+Gender=ggplot(D_Churn, aes(x=gender)) + ggtitle("Gender") + xlab("Gender") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("deeppink3", "blue")) + 
+  ylab("Percentage")  
+
+Senior=ggplot(D_Churn, aes(x=SeniorCitizen)) + ggtitle("Senior") + xlab("Senior") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+Partner=ggplot(D_Churn, aes(x=Partner)) + ggtitle("Partner") + xlab("Partner") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+
+Dependents=ggplot(D_Churn, aes(x=Dependents)) + ggtitle("Dependents") + xlab("Dependents") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+Phone=ggplot(D_Churn, aes(x=PhoneService)) + ggtitle("Phone Service") + xlab("Phone Service") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+Multilines=ggplot(D_Churn, aes(x=MultipleLines)) + ggtitle("Multiple Lines") + xlab("Multiple Lines") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+Internet_Service=ggplot(D_Churn, aes(x=InternetService)) + ggtitle("Internet Service") + xlab("Internet Service") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkgrey", "darkblue", "darkorchid4")) + 
+  ylab("Percentage")
+
+OnlineSec=ggplot(D_Churn, aes(x=OnlineSecurity)) + ggtitle("Online Security") + xlab("Online Security") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+
+OnlineBackup=ggplot(D_Churn, aes(x=OnlineBackup)) + ggtitle("Online Backup") + xlab("Online Backup") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+DeviceProtection=ggplot(D_Churn, aes(x=DeviceProtection)) + ggtitle("Device Protection") + xlab("Device Protection") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+TechSupport=ggplot(D_Churn, aes(x=TechSupport)) + ggtitle("Tech Support") + xlab("Tech Support") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+StreamingTV=ggplot(D_Churn, aes(x=StreamingTV)) + ggtitle("Streaming TV") + xlab("Streaming TV") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+StreamingMovies=ggplot(D_Churn, aes(x=StreamingMovies)) + ggtitle("Streaming Movies") + xlab("Streaming Movies") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+Contract=ggplot(D_Churn, aes(x=Contract)) + ggtitle("Contract") + xlab("Contract") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkgrey", "darkblue", "darkorchid4")) + 
+  ylab("Percentage")
+
+PaperlessBilling=ggplot(D_Churn, aes(x=PaperlessBilling)) + ggtitle("Paperless Billing") + xlab("Paperless Billing") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill =c("darkred","darkgreen")) + 
+  ylab("Percentage")
+
+
+PaymentMethod=ggplot(D_Churn, aes(x=PaymentMethod)) + ggtitle("Payment Method") + xlab("Payment Method") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.2, fill =c("darkgrey", "darkblue", "darkorchid4","darkorange3")) + 
+  ylab("Percentage")
+
+
+tenure_groups=ggplot(D_Churn, aes(x=tenure_groups)) + ggtitle("Tenure Groups") + xlab("Tenure Groups") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.2, fill =c("darkgrey", "darkblue", "darkorchid4","darkorange3","indianred4")) + 
+  ylab("Percentage")
+
+grid.arrange(Gender,Senior,Partner,Dependents)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(Multilines,DeviceProtection,Phone,Internet_Service)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(Multilines,DeviceProtection,Phone,Internet_Service)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(OnlineBackup,OnlineSec,TechSupport,StreamingTV)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(StreamingMovies,StreamingTV)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(Contract,PaymentMethod,PaperlessBilling, nrow=3)
+```
+
+
+```{r echo=FALSE}
+grid.arrange(PaymentMethod,tenure_groups,nrow=2)
+```
+
+
+```{r echo=FALSE}
+#quantitative variable
+ggplot(D_Churn)+
+  geom_boxplot(aes(y = MonthlyCharges),outlier.colour="black", outlier.shape=16,
+               outlier.size=2, notch=FALSE,colour="black",fill="azure")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+All the qualitative variables show reasonably distribution spread, we have good evidence to keep all of them, more over, our only numerical variable does not seem to show any outliers.
+
+After studying our variables graphically, we focus on our target variable:
+
+```{r echo=FALSE}
+Churn=ggplot(D_Churn, aes(x=Churn)) + ggtitle("Churn") + xlab("Churn") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), width = 0.5, fill ="darkgoldenrod3") + 
+  ylab("Percentage")  
+
+Churn
+
+```
+
+```{r}
+table(data$Churn)/nrow(data) 
+```
+
+As it is easily visible, the distribution is heavily unbalanced towards the "No". 
+This is a problem that will have to be addressed before we move forward with the implementation of the models.
+
+
+We also want to see how the variable "tenure" behaves over the months, compared to "Churn". To do this we use the previous version of the variable "Tenure" that we created during the data preparation.
+
+```{r echo=FALSE}
+ggplot(data=data,aes(tenure_initial, fill = Churn))+
+  geom_bar(size = 1)+
+  labs(x="Tenure in month") 
+```
+
+The distribution for tenure is very different between customers who churned and who didn't churn. 
+For those who churned, the distribution is positvely skewed, which means customers who churned are more likely to cancel the service in less than 1 year. 
+
+For current customers who didn't churn, there are two peaks. The second peak is much more ripid than the first one, which means that a large group of current customers have been using the service almost 6 years (almost 70 month).
+
+
+Now we will show how the variables behave with respect to the response variable (Churn).
+
+```{r echo=FALSE, paged.print=TRUE}
+pl1=ggplot(D_Churn) +
+  geom_bar(aes(x = gender, fill = Churn),position = "fill", stat = "count", 
+           show.legend = T)+
+  labs(x="Churn VS Gender",y="Percentage")
+
+pl2=ggplot(D_Churn) +
+  geom_bar(aes(x = SeniorCitizen, fill = Churn), position = "fill", stat = "count", 
+           show.legend = T)+
+  labs(x="Churn VS Senior-citizen",y="Percentage")
+
+
+pl3=ggplot(D_Churn) +
+  geom_bar(aes(x = Partner, fill = Churn), position = "fill", stat = "count", 
+           show.legend = T)+
+  labs(x="Churn VS Partner",y="Percentage")
+
+pl4=ggplot(D_Churn) +
+  geom_bar(aes(x = Dependents, fill = Churn), position = "fill", stat = "count", 
+           show.legend = T) +
+  labs(x="Churn VS Dependents",y="Percentage")
+
+pl5=ggplot(D_Churn) +
+  geom_bar(aes(x = PhoneService, fill = Churn), position = "fill", stat = "count", 
+           show.legend = T)+
+  labs(x="Churn VS Phone Service",y="Percentage")
+
+pl6=ggplot(D_Churn) +
+  geom_bar(aes(x = InternetService, fill = Churn), position = "fill", stat = "count", 
+           show.legend = T)+
+  labs(x="Churn VS Internet Service",y="Percentage")
+
+
+grid.arrange(pl1,pl2,pl3,pl4,pl5,pl6, ncol = 2, nrow = 3)
+
+```
+ 
+```{r echo=FALSE}
+pl7=ggplot(D_Churn)+
+  geom_boxplot(aes(y = MonthlyCharges, fill = Churn),outlier.colour="black",outlier.shape=16,
+               outlier.size=2, notch=FALSE)+
+  labs(title=" Monthly charges VS Churn")
+pl7+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+The Churn rate does not change particularly between males and females, as well as for those who have a telephone service and those who do not have it; in both variables there is a lower dropout rate. As for senior citizens, it is noted that have a higher dropout rate (Churn=Yes) than non-senior citizens. 
+
+As for customers who have Partners, in the same way as customers who have employees, they have a higher negative churn than those without partners, it means that they abandon less. 
+
+Finally, among the three methods of internet service, those who have not used the service as those who have DSL, have a lower abandonment than customers with fiber optics.
+
+## MODELS
+Before starting with the implementation of the models, it is necessary to work on the available data We have to divide our population into train and test data:
+\begin{itemize}
+  \item training set: a subset to train a model;
+  \item test set: a subset to test the trained model.
+\end{itemize}
+
+```{r}
+set.seed(2020)
+intrain= createDataPartition(D_Churn$Churn,p=0.8,list=FALSE)
+C_train= D_Churn[intrain,]
+C_test= D_Churn[-intrain,]
+
+cat("Dimensions of training set:",dim(C_train))
+#To confirm the right dimensions of the partition
+```
+
+```{r}
+cat("Dimensions of test dataset:",dim(C_test))
+```
+
+We can see how my observations for the two Churn modalities are distributed within the training set. We see from the number and from the plot that this is an absolutely unbalanced situation.
+
+```{r}
+table(C_train$Churn)
+```
+```{r echo=FALSE}
+barplot(table(C_train$Churn),col="darkgoldenrod3",main="Churn Train Dataset")
+```
+```{r include=FALSE}
+C_train$gender=as.factor(C_train$gender)
+C_train$SeniorCitizen=as.factor(C_train$SeniorCitizen)
+C_train$Partner=as.factor(C_train$Partner)
+C_train$Dependents=as.factor(C_train$Dependents)
+C_train$PhoneService=as.factor(C_train$PhoneService)
+C_train$InternetService=as.factor(C_train$InternetService)
+C_train$Contract=as.factor(C_train$Contract)
+C_train$PaperlessBilling=as.factor(C_train$PaperlessBilling)
+C_train$PaymentMethod=as.factor(C_train$PaymentMethod)
+C_train$Churn=as.factor(C_train$Churn)
+
+C_test$gender=as.factor(C_test$gender)
+C_test$SeniorCitizen=as.factor(C_test$SeniorCitizen)
+C_test$Partner=as.factor(C_test$Partner)
+C_test$Dependents=as.factor(C_test$Dependents)
+C_test$PhoneService=as.factor(C_test$PhoneService)
+C_test$InternetService=as.factor(C_test$InternetService)
+C_test$Contract=as.factor(C_test$Contract)
+C_test$PaperlessBilling=as.factor(C_test$PaperlessBilling)
+C_test$PaymentMethod=as.factor(C_test$PaymentMethod)
+
+C_test$Churn=as.factor(C_test$Churn)
+```
+
+After transforming my categorical variables into **factor**, a step that I need later to work on the models, we can summarize the structure of my sets to also understand how to proceed.
+
+```{r}
+str(C_train)
+```
+
+
+```{r}
+str(C_test)
+```
+
+In classification problems, a disparity in the frequencies of the observed classes can have a significant negative impact on model fitting. One technique for resolving such a class imbalance is to subsample the training data in a manner that mitigates the issues. We used an hybrid method that is called *ROSE*, to deal with binary classification problems in the presence of imbalanced classes.
+
+*ROSE* (Random Over Sampling Examples) helps us to generate artificial data based on sampling methods with a smoothed bootstrap approach; it uses smoothed bootstrapping to draw artificial samples from the feature space neighbourhood around the minority class.
+
+```{r}
+# generate new balanced data 
+set.seed(2020)
+model.train=ROSE(Churn ~ ., data=C_train, seed=123)$data 
+model.test=C_test
+
+model.complete=rbind(model.train,model.test)
+```
+
+
+```{r}
+# check balance of new data
+table(model.train$Churn)
+```
+
+```{r echo=FALSE}
+barplot(table(model.train$Churn), main="Churn balanced",col="darkgoldenrod3")
+```
+
+It is now clearly visible, both from the point of view of the number of observations and from the plot that we are in a much more balanced situation.
+
+### Model 1: **Logistic Regression**
+This is a classification model under the Generalized Linear Models family; the main feature is that the target variable is distributed like a bernoulli. It is very interpretable because thanks to the coefficient estimation we can understand which are the most influential features and how they change the result (increase/decrease the log ods). We use Logistic regression to predict the class **Churn** of individuals based on multiple predictor variables.
+
+```{r}
+LogModel=glm(Churn ~ .,family=binomial,data=model.train)
+
+print(summary(LogModel))
+```
+
+The summary(LogModel) gives the beta coefficients, standard error, z Value and p Value. Due to the fact that we have categorical variables with multiple levels, we find a row-entry for each category of that variable (like Contract). That is because, each individual category is considered as an independent binary variable by the glm(). In case of only two level we will have only one row (like StreamingTv)
+
+The difference between Null deviance and Residual deviance tells us that the model is a good fit. Greater the difference better the model. Null deviance is the value when you only have intercept in your equation with no variables and Residual deviance is the value when you are taking all the variables into account. It makes sense to consider the model good if that difference is big enough.
+
+The AIC value is a measure of the quality of the model it takes into consideration the number of variables used compared to the number of observations. 
+A low AIC is desirable.
+
+Now let's start with the *prediction*, using the train set as the first step.
+
+```{r}
+pred.log.train = predict(LogModel, newdata=model.train,
+                   type="response")
+summary(pred.log.train)
+```
+
+The output of a Logistic regression model is a probability. We can select a threshold value of the probability. If the probability is greater than this threshold value, the event(Churn) is predicted to happen otherwise it is predicted not to happen.
+
+So, instead of trying to predict exactly whether the people will churn or not, we calculate the probability or a likelihood of the customer to be yes. We are tring to fit a probability into 0 and 1, which are the two possible outcomes. To do that we decide a cut off value/threshold.
+The threshold value is selected based on which errors are better. 
+This would imply that it would be best for no errors (quite impossible).
+
+There are two types of errors that this model can make:
+\begin{enumerate}
+  \item where the model predicts YES,  but the actual outcome is NO;
+  \item where the model predicts NO, but the actual outcome is YES.
+\end{enumerate}
+
+A confusion or *classification matrix* compares the actual outcomes to the predicted outcomes. The rows are labelled with actual outcomes while the columns are labelled with predicted outcomes.
+
+```{r}
+# Confusion matrix for threshold of 0.5,0.2 and 0.7
+table(model.train$Churn, pred.log.train > 0.2)
+table(model.train$Churn, pred.log.train > 0.5)
+table(model.train$Churn, pred.log.train > 0.7)
+```
+
+These are tables that are used to describe the performance of a classification model on a set of data for which the true values are known.
+\begin{itemize}
+  \item True Positive: You predicted positive and it's true;
+  \item True Negative: You predicted negative and it's true;
+  \item False Positive: You predicted positive and it's false;
+  \item False Negative: You predicted negative and it's false.
+\end{itemize}
+
+We use the Receiver Operator Characteristic curve, or *ROC curve*, to decide which value of the threshold is best.
+The best threshold (or cutoff) point to be used in glm models 
+is the point which maximises the specificity and the sensitivity. 
+This threshold point might not give the highest prediction in your model, but it wouldn't be biased towards positives or negatives. 
+
+Recall that we made predictions on our training set and called them *pred.log.train*; we'll use these predictions to create our ROC curve.
+
+```{r}
+ROCRpred = ROCR::prediction(pred.log.train, model.train$Churn)
+```
+
+The first argument in the chunk is the predictions we made with our model, which we called pred.log.train.
+The second argument is the true outcomes of our data points,
+which in our case, model.train$Churn.
+
+```{r}
+ROCRperf = ROCR::performance(ROCRpred, "tpr", "fpr")
+```
+
+This function takes as arguments the output of the prediction function, and then what we want on the x and y-axes (True positive rate and False posite rate).
+
+Now, we just plot the output of the performance function:
+
+```{r include=FALSE}
+# Plot ROC curve
+plot(ROCRperf)
+# Add colors
+plot(ROCRperf, colorize=TRUE)
+```
+
+
+```{r echo=FALSE}
+# Add threshold labels 
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+
+Given the graph we would choose between 0.5 and 0.6.
+The sensitivity, or true positive rate of the model, is shown on the y-axis. The false positive rate, or 1 minus the specificity, is given on the x-axis. The line shows how these two outcome measures vary with different threshold values.
+
+Now we perform the Prediction on Test Set and to do that we used the threshold value of 0.6 (that we have just computed) and we obtain the following confusion matrix, on the test set.
+
+```{r}
+log.pred.test = predict(LogModel, type = "response", newdata = model.test)
+```
+
+
+```{r echo=FALSE}
+fitted.results=ifelse(log.pred.test> 0.59,"Yes","No")
+fitted.results=as.factor(fitted.results)
+
+require(caret)    
+cm=confusionMatrix(data=fitted.results, 
+                    reference=model.test$Churn)
+cm #confusion matrix with all statistics
+```
+
+Below we see that the newly implemented model has a  good accuracy.
+
+```{r}
+accuracy=round(cm$overall[1],2) 
+
+Log_acc = accuracy
+
+cat("Logistic regression accuracy:",Log_acc)
+```
+
+### Model 2: Decision tree
+A decision tree (also referred to as a classification tree or a regression tree) is a predictive model which is a mapping from observations about an item to conclusions about its target value. In the tree structures, leaves represent classifications (also referred to as labels), nonleaf nodes are features, and branches represent conjunctions of features that lead to the classifications.
+This algorithm looks through the entire dataset to find the best variable (and the best split) to divide the data in 2 parts and create 2 different subsets.
+We predict that each observation belongs to the most commonly occuring class of training observations in the region to which it belongs. It assigns an observation in a given region to the most commonly occurring class of training observation in that region.
+
+It is a **very interpreable model**: looking at the splits we understand how the prediction process is developed.
+
+Key concepts that we will use in our analysis are:
+\begin{itemize}
+\item Root Node: it represents entire population or sample and this further gets divided into two or more homogeneous sets;
+\item Splitting: it is a process of dividing a node into two or more sub-nodes;
+\item Decision Node: when a sub-node splits into further sub-nodes, then it is called decision node;
+\item Leaf/Terminal Node: nodes do not split is called Leaf or Terminal node;
+\item Pruning*: when we remove sub-nodes of a decision node, this process is called pruning. You can say opposite process of splitting;
+\item Branch/Sub-Tree: a sub section of entire tree is called branch or sub-tree;
+\item Parent and Child Node: a node, which is divided into sub-nodes is called parent node of sub-nodes whereas sub-nodes are the child of parent node.
+\end{itemize}
+
+Also we always need to validate our model. We can't just fit the model to the training data and it would accurately work for some new data never seen before. 
+Maybe we can have good predictions on the training set but likely to overfit the data, leading to poor set performance.
+A smaller tree with fewer splits could avoid that and this process is called **pruning**.
+
+We have also decided, in this section dedicated to decision trees, to implement 3 different **cross validation** techniques and see if they obtain very different results on decision trees.
+
+We will therefore see these three techniques:
+\begin{enumerate}
+ \item Leave-one-out cross validation (LOOCV)
+ \item k-fold cross validation
+ \item Validation Approach
+\end{enumerate}
+
+#### 1) LOOCV
+Leave-one-out cross-validation is a special case of  cross-validation where the number of folds equals the number of instances in the data set. Thus, the learning algorithm is applied once for each instance,using all other instances as a  training set and using the selected instance as a single-item  test set.
+Probably more inclined to overfitting since at each iteration we fit a model with n-1 observations.
+
+```{r}
+set.seed(2020)
+fit=tree(Churn~.,data=model.complete,method = 'gini')
+fit
+```
+
+For classification problems, the Gini coefficient function is used which provides an indication of how "pure" the leaf nodes are.
+
+```{r}
+summary(fit)
+```
+
+In this output we see the variables involved in the construction of the tree, that has five terminal nodes and its misclassification error rate.
+
+Graphically our tree is as follows:
+
+```{r echo=FALSE}
+plot(fit) #fit
+text(fit, pretty=0)
+```
+
+In the case of a classification tree, the argument type="class" instructs R to return the actual class prediction.
+
+```{r}
+set.seed(2020)
+cv.fit.l=cv.tree(fit,FUN=prune.misclass,K=length(model.complete)) 
+#using k=observations we implement the LOOCV
+cv.fit.l
+```
+
+To adapt classification trees we used the FUN = prune.misclass argument (in which case the error rate will be the guiding criterion).
+The output of cv.tree() will report:
+\begin{itemize}
+  \item the number of terminal nodes of each tree considered (size);
+  \item the corresponding error rate (dev);
+  \item other parameters.
+\end{itemize}
+
+*Dev* corresponds to the cross-validation error rate in this instance. The tree with 4 terminal nodes results in the lowest cross-validation error rate.
+
+```{r echo=FALSE}
+
+ggplot(mapping=aes(x=cv.fit.l$size,y=cv.fit.l$dev))+
+  geom_line(linetype='dashed')+
+  geom_point()+
+  geom_point(mapping=aes(x=4,y=cv.fit.l$dev[which(cv.fit.l$size==4)],colour='4 leafs'),shape='X',size=6)+
+  scale_x_continuous(breaks = c(cv.fit.l$size))+
+  labs(x='Size',y='Dev',colour='Model selected:')+
+  theme(legend.position = c(0.8,0.8),legend.text = element_text(size=10))
+```
+
+As you can see from the plot, we note that after Size = 4 the decrease in Dev is much less noticeable and it tends to stabilize in the subsequent nodes. This is why we then prune and implement a tree that stops at size = 4.
+
+
+```{r}
+prune.fit=prune.misclass(fit,best=4) 
+summary(prune.fit)
+```
+
+We can see the Residual mean deviance and the Misclassification error. Furthermore, from this summary we also see the variables currently involved and the type of tree (logically a classification because our variable is binary categorical).
+
+A very basic but at the same time exhaustive graphic representation is the following:
+
+```{r echo=FALSE}
+plot(prune.fit,col='darkgray',lwd=2)
+text(prune.fit,pretty=0)
+```
+
+So let's predict using the tree we just implemented.
+
+```{r}
+fitted=predict(prune.fit, newdata=model.complete,type='class')
+```
+
+So let's see the confusion matrix, already explained above. The result is good as a good percentage of the observations are concentrated in True Positives and True Negatives.
+
+```{r}
+tree_l = confusionMatrix(data=fitted, 
+                         reference=model.complete$Churn)
+tree_l
+```
+
+```{r}
+tree_l_acc = tree_l$overall[1]
+tree_l_acc
+```
+
+#### 2) K-fold cross validation
+In K Fold cross validation, the dataset is divided into k different subsets. The method is repeated k times, such that each time, one of the k subsets is used as the test set and the other k-1 subsets are put together to form a training set.
+
+```{r}
+set.seed(2020)
+
+model_T=train(
+  Churn ~., data = model.train, method = "rpart",
+  trControl = trainControl("cv", number = 10)
+)
+```
+
+
+```{r}
+# Best tuning parameter
+model_T$bestTune
+```
+The complexity parameter (cp) is used to control the size of the decision tree and to select the optimal tree size.
+
+```{r}
+model_T
+```
+
+Make predictions on the test data using test set:
+
+```{r}
+predicted.classes_T = model_T %>% predict(model.test)
+```
+
+Compute model prediction accuracy rate and the confusion matrix:
+
+```{r}
+Tree_k = confusionMatrix(data=predicted.classes_T, 
+                         reference=model.test$Churn)
+
+Tree_k
+```
+```{r}
+Tree_k_acc = Tree_k$overall[1]
+Tree_k_acc
+```
+
+We see that the accuracy, using this approach on the data we have available, decreases.
+
+Also, looking at the plot below, as the CP increases, the accuracy decreases.
+
+```{r echo=FALSE}
+plot(model_T)
+```
+
+The newly implemented tree is the following:
+
+```{r}
+model_final=model_T$finalModel
+plot(model_final,col='darkgray',cex=2)
+text(model_final,pretty=0)
+```
+
+#### 3)VALIDATION APPROACH 
+
+Again we proceed as before, but using the train and test set partition, using the rpart package.
+So let's create a decision tree on the model.train using rpart.control to have various parameters that control aspects of the rpart fit.
+The meaning of the chosen hyperparameters is as follows:
+\begin{itemize}
+\item minsplit: the minimum number of observations that must exist in a node in order for a split to be attempted.
+\item minbucket: the minimum number of observations in any terminal leaf node;
+\item maxdepth: set the maximum depth of any node of the final tree, with the root node counted as depth 0.
+\item usesurrogate: how to use surrogates in the splitting process; for value 2 ,if all surrogates are missing, then send the observation in the majority direction. A value of 0 corresponds to the action of tree, and 2 to the recommendations of Breiman et.al book.
+\end{itemize}
+
+```{r}
+set.seed(2020)
+mtree = rpart(Churn~., data = model.train, method="class", control = rpart.control(minsplit = 20, minbucket = 7, maxdepth = 10, usesurrogate = 2, xval =10 ))
+mtree
+```
+
+The tree plot is the following:
+
+```{r}
+prp(mtree, faclen = 0, cex = 0.8, extra = 1)
+```
+
+Let's do the appropriate pruning using the best complexity parameter:
+
+```{r}
+#pruning:
+printcp(mtree)
+bestcp=mtree$cptable[which.min(mtree$cptable[,"xerror"]),"CP"]
+```
+
+```{r}
+# Prune the tree using the best cp.
+pruned= prune(mtree, cp = bestcp)
+```
+
+Plot pruned tree:
+
+```{r echo=FALSE, warning=FALSE}
+prp(pruned, faclen = 0, cex = 0.8, extra = 1)
+```
+
+Confusion matrix (on training data):
+
+```{r}
+conf.matrix = table(model.train$Churn, predict(pruned,type="class"))
+rownames(conf.matrix) = paste("Actual", rownames(conf.matrix), sep = ":")
+colnames(conf.matrix) = paste("Pred", colnames(conf.matrix), sep = ":")
+print(conf.matrix)
+```
+```{r}
+#Scoring
+val1 = predict(pruned, model.test, type = "prob")
+#Storing Model Performance Scores
+pred_val=ROCR::prediction(val1[,2],model.test$Churn)
+
+# Calculating Area under Curve  
+perf_val=ROCR::performance(pred_val,"auc")
+```
+
+The random model is defined by a bisector, the area subtended by my model is greater than the area subtended from the bisector and therefore clearly superior to the random model.
+
+Plotting Lift curve:
+
+```{r echo=FALSE}
+plot(ROCR::performance(pred_val, measure="lift", x.measure="rpp"), colorize=TRUE)
+```
+
+A lift curve is a way of visualizing the performance of a classification model
+and it shows shows the ratio of a model to a random guess.
+
+```{r}
+# Calculating True Positive and False Positive Rate
+perf_val = ROCR::performance(pred_val, "tpr", "fpr")
+```
+
+Plot the ROC curve:
+
+```{r echo=FALSE}
+plot(perf_val, col = "red", lwd = 1.5)
+```
+
+
+```{r}
+#pruned tree plot
+prp(pruned, faclen = 0, cex = 0.8, extra = 1,main="Tree")
+```
+
+
+```{r}
+# Accuracy on test set
+Tc = confusionMatrix(data=predict(pruned, newdata = model.test,  type="class"), 
+                     reference=model.test$Churn)
+
+Tree_acc = Tc$overall[1]
+Tree_acc
+```
+
+
+
+### MODEL 3: BAGGING TREES AND RANDOM FORREST
+Random Forests algorithm is a classifier based on primarily two methods: bagging and random subspace method.
+The fundamental difference is that in Random forests only a subset of features are selected at random out of the total and the best split feature from the subset is used to split each node in a tree, unlike in bagging where all features are considered for splitting a node.
+
+#### BAGGING
+Bagging is a special case of a random forest where the
+randomForest() function from the randomForest library can
+be used to build a bagged model or a random forest.
+
+```{r}
+set.seed(2020)
+bag=randomForest(Churn~.,data=model.train,
+                 mtry=18,
+                 importance=TRUE,
+                 ntree=200)
+```
+
+* mtry=18: specifies to use all 18 predictors of thedataset at each split of the trees (in the case of random forest we will reduce the number of predictors to consider)
+importance=TRUE : to build the measuresof influence of the variables;
+* ntree=200: number of bootstrap samples.
+
+```{r}
+print(bag)
+```
+
+#### RANDOM FOREST
+It is a classification model based on the training of m different decision trees:
+\begin{itemize}
+\item each decision tree is fit on a random subset of the training set and a random subset of the input variables.
+\item the output of the random forest is the average of the decision tree's outputs.
+\end{itemize}
+It is a semi-interpretable model: we know which features are the most influential, but not how they change the result. It has a low risk of overfitting.
+
+
+To grow a forest, you proceed in the same way but using a lower number of mtry than the total number. The default is mtry  equal to the root of the total number of variables, but instead we will use cross validation to find the most suitable value
+
+```{r}
+# define training control
+train_control = trainControl(method="cv", number=10)
+
+# train the model
+tunegrid = expand.grid(.mtry=c(7,8,12,15))
+set.seed(2020)
+model = train(Churn~., data=model.train, trControl=train_control,method = "rf",
+              tuneGrid = tunegrid)
+```
+
+
+```{r}
+# summarize results
+print(model)
+```
+
+In the output above, the optimal mtry number is specified after cross validation.
+We have shown only a subsaple of all the cross validation trials so to not make the scrip too computationally heavy.
+
+We, therefore, implement a random forrest with mtry equal to 8.
+
+```{r}
+set.seed(2020)
+rf=randomForest(Churn~.,data=model.train,
+                mtry=8,
+                importance=TRUE,
+                ntree=200)
+rf
+```
+
+For classification, the purity of a node is measured with the gini index.
+Every time a split of a node is made on variable the gini impurity criterion for the two descendent nodes is less than the parent node. Adding up the gini decreases for each individual variable over all trees in the forest gives a fast variable importance that is often very consistent with the permutation importance measure.
+
+It follows the variable importance plot.
+
+```{r echo=FALSE, fig.height=6}
+varImpPlot(rf,cex=.7,col="black",lwd=.5, main="Random Forest")
+```
+
+So to make predictions, given a set of predictors, we can use the predict() function.
+
+```{r}
+rf.predict=predict(rf,model.test)
+```
+
+
+```{r}
+model.test$pred.Churn=predict(rf,model.test) 
+
+Rfc = confusionMatrix(data=rf.predict, 
+                      reference=model.test$Churn)
+
+Rfc_acc = Rfc$overall[1]
+```
+
+I create a new column so to make a comparison between predicted and original values.
+The head function gives me a preview.
+```{r}
+Churn.pred = data.frame(Original=model.test$Churn,Pred=model.test$pred.Churn) 
+```
+```{r}
+head(Churn.pred)
+```
+
+### MODEL 4: XGBOOST
+XGBoost stands for Extreme Gradient Boosting; it is a specific implementation of the Gradient Boosting method which uses more accurate approximations to find the best tree model.
+Gradient Boosting is an iterative approach that creates multiple trees. The trees are developed sequentially, non in parallel (like Random Forest).
+While regular gradient boosting uses the loss function of our base model (decision tree) as a proxy for minimizing the error of the overall model, XGBoost uses the 2nd order derivative as an approximation.
+
+Boosting has different tuning parameters including:
+\begin{itemize}
+\item The number of trees B
+\item The shrinkage parameter lambda
+\item The number of splits in each tree.
+\end{itemize}
+
+There are different variants of boosting. Xgboost is one of them and it is the most commonly used boosting technique, which involves resampling of observations and columns in each round. It offers the best performance. 
+Boosting can be used for both classification and regression problems. Of course, as mentioned before, we are in a classification setting.
+
+We'll use the caret workflow,to automatically adjust the model parameter values, and fit the final best boosted tree that explains the best our Churn dataset.
+```{r}
+set.seed(2020)
+#Fit the model on the training set
+#trControl, to set up 10-fold cross validation
+model=train(
+  Churn ~., data = model.train, method = "xgbTree",
+  trControl = trainControl("cv", number = 10)
+)
+
+```
+
+Best tuning parameters che otteniamo sono:
+
+```{r}
+model$bestTune
+```
+
+Make predictions on the test data:
+
+```{r}
+predicted.classes = model %>% predict(model.test)
+```
+
+The function `varImp()` displays the importance of variables in percentage:
+
+```{r echo=FALSE}
+Vi=varImp(model)
+
+ggplot(mapping=aes(y=rownames(Vi$importance),x=Vi$importance$Overall))+
+  geom_hline(yintercept = rownames(Vi$importance),linetype = "dashed",col='grey')+
+  geom_point()+
+  ggtitle('Xgboost',subtitle = 'Variable importance')+
+  xlab('Importance')+
+  ylab('')
+```
+
+So let's see the last confusion matrix of our analysis and the accuracy of the model.
+
+```{r}
+Xgb = confusionMatrix(data=predicted.classes, 
+                      reference=model.test$Churn)
+
+Xgb_acc = Xgb$overall[1]
+Xgb_acc
+```
+
+
+### CONCLUSIONS
+As we said at the beginning, this analysis sees as its main objective a part of data preparation and data investigation, implementation and comparison between different predictive models. We have seen what these models are, how they are implemented on the code and how to apply tuning and improvement techniques. As already introduced initially, it is not a business approach that sees a specific type of customer identified and a pre-established goal for a business need. 
+
+```{r include=FALSE}
+
+Accuracy= data.frame("Logistic" = Log_acc,"Tree LOOCV"= tree_l_acc ,"Tree k-fold CV"= Tree_k_acc, "Tree Train-Test" = Tree_acc, "RandomForest" = Rfc_acc, "Xgboost" = Xgb_acc,
+                row.names = "Accuracy")
+```
+
+
+```{r echo=FALSE}
+print(Accuracy)
+```
+
+As a comparison method we use the accuracy, which is a statistical measure of how well a binary classification test correctly identifies or excludes a condition. It is the proportion of correct predictions among the total number of cases examined.Among all the models seen we see that no one can overcome Logistic Regression. So, to conclude, we can say that in this work logistic regression is the winning model.
