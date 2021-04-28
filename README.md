@@ -1,4 +1,4 @@
-# Prediction-Customer-Behaviour
+# Customer-Behaviour-Prediction
 
 Data downloaded from **IBM Sample Data Sets** for **customer retention programs**. The goal of this work is to create an analysis in order to **predict consumer behaviour**. 
 The project is subdivided in the following steps:  
